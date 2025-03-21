@@ -2,8 +2,11 @@ package stream
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
+	"log"
 	"strings"
+	"text/template"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +30,13 @@ type Model struct {
 	width      int
 	height     int
 }
+
+var (
+	//go:embed template/note.tmpl
+	NoteTmpl string
+	//go:embed template/renote.tmpl
+	RenoteTmpl string
+)
 
 func NewModel(instance *setting.Instance, client websocket.Client, msgCh chan tea.Msg) *Model {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -163,31 +173,38 @@ func (m *Model) refreshViewBuffer() {
 
 // formatNote はノートを表示用にフォーマットします
 func formatNote(note *misskey.Note) string {
-	var b strings.Builder
-
+	var buf strings.Builder
+	var data map[string]interface{}
 	if note.Body.Body.RenoteID != "" {
-		// リノートの場合
-		b.WriteString(fmt.Sprintf("%s (@%s) がリノート:\n",
-			color.HiBlackString(note.Body.Body.User.Name),
-			color.HiBlackString(note.Body.Body.User.Username)))
-
-		b.WriteString(fmt.Sprintf("  %s (@%s): %s\n",
-			color.HiGreenString(note.Body.Body.Renote.User.Name),
-			color.HiBlueString(note.Body.Body.Renote.User.Username),
-			note.Body.Body.Renote.Text))
-
-		b.WriteString(fmt.Sprintf("  %s\n",
-			color.HiBlackString(note.Body.Body.Renote.CreatedAt.Format(time.RFC3339))))
+		t, err := template.New("note").Parse(RenoteTmpl)
+		if err != nil {
+			log.Printf("template error: %v", err)
+		}
+		data = map[string]interface{}{
+			"renotedName":     color.HiBlackString(note.Body.Body.User.Name),
+			"renotedUsername": color.HiBlackString(note.Body.Body.User.Username),
+			"name":            color.HiGreenString(note.Body.Body.Renote.User.Name),
+			"username":        color.HiBlueString(note.Body.Body.Renote.User.Username),
+			"text":            note.Body.Body.Renote.Text,
+			"createdAt":       note.Body.Body.Renote.CreatedAt.Format(time.RFC3339),
+		}
+		if err := t.Execute(&buf, data); err != nil {
+			log.Printf("template execute error: %v", err)
+		}
 	} else {
-		// 通常投稿の場合
-		b.WriteString(fmt.Sprintf("%s (@%s): %s\n",
-			color.HiGreenString(note.Body.Body.User.Name),
-			color.HiBlueString(note.Body.Body.User.Username),
-			note.Body.Body.Text))
-
-		b.WriteString(fmt.Sprintf("  %s\n",
-			color.HiBlackString(note.Body.Body.CreatedAt.Format(time.RFC3339))))
+		t, err := template.New("note").Parse(NoteTmpl)
+		if err != nil {
+			log.Printf("template error: %v", err)
+		}
+		data = map[string]interface{}{
+			"name":      color.HiGreenString(note.Body.Body.User.Name),
+			"username":  color.HiBlueString(note.Body.Body.User.Username),
+			"text":      note.Body.Body.Text,
+			"createdAt": note.Body.Body.CreatedAt.String(),
+		}
+		if err := t.Execute(&buf, data); err != nil {
+			log.Printf("template execute error: %v", err)
+		}
 	}
-
-	return b.String()
+	return buf.String()
 }

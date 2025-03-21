@@ -5,13 +5,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"log"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fatih/color"
 	"github.com/google/uuid"
 	"github.com/google/wire"
 	"github.com/sacOO7/gowebsocket"
@@ -66,13 +63,6 @@ var (
 	ChannelTypeMain  = "main"
 	ChannelTypeHome  = "homeTimeline"
 	ChannelTypeLocal = "localTimeline"
-
-	// TODO: このパッケージはwebsocketによる通信処理の責務を負う。tmplなどの見た目の部分は別パッケージに移管する
-	//go:embed template/note.tmpl
-	NoteTmpl string
-
-	//go:embed template/renote.tmpl
-	RenoteTmpl string
 )
 
 var ProviderSet = wire.NewSet(
@@ -108,8 +98,6 @@ func (c *StandardClient) Start() error {
 	if resolveErr != nil {
 		return resolveErr
 	}
-	// interrupt := make(chan os.Signal, 1)
-	// signal.Notify(interrupt, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	socket := gowebsocket.New(wsUrl)
 	c.socket = socket
@@ -129,9 +117,7 @@ func (c *StandardClient) Start() error {
 	}
 
 	socket.OnTextMessage = func(message string, socket gowebsocket.Socket) {
-		// log.Println("Received message " + message)
 		// TODO: このあたりの描画処理はまるごとwriterへ委譲する
-		// Write -> SetContentへ流すViewを作ってClientへDIする
 		note := &misskey.Note{}
 		if err := json.Unmarshal([]byte(message), &note); err != nil {
 			log.Printf("note marshalize error %v", err)
@@ -141,45 +127,10 @@ func (c *StandardClient) Start() error {
 		if c.msgCh != nil {
 			c.msgCh <- NoteMessage{Note: note}
 		}
-		if c.writer != nil {
-			var data map[string]interface{}
-			if note.Body.Body.RenoteID != "" {
-				t, err := template.New("note").Parse(RenoteTmpl)
-				if err != nil {
-					log.Printf("template error: %v", err)
-				}
-				data = map[string]interface{}{
-					"renotedName":     color.HiBlackString(note.Body.Body.User.Name),
-					"renotedUsername": color.HiBlackString(note.Body.Body.User.Username),
-					"name":            color.HiGreenString(note.Body.Body.Renote.User.Name),
-					"username":        color.HiBlueString(note.Body.Body.Renote.User.Username),
-					"text":            note.Body.Body.Renote.Text,
-					"createdAt":       note.Body.Body.Renote.CreatedAt.Format(time.RFC3339),
-				}
-				if err := t.Execute(c.writer, data); err != nil {
-					log.Printf("template execute error: %v", err)
-				}
-			} else {
-				t, err := template.New("note").Parse(NoteTmpl)
-				if err != nil {
-					log.Printf("template error: %v", err)
-				}
-				data = map[string]interface{}{
-					"name":      color.HiGreenString(note.Body.Body.User.Name),
-					"username":  color.HiBlueString(note.Body.Body.User.Username),
-					"text":      note.Body.Body.Text,
-					"createdAt": note.Body.Body.CreatedAt.String(),
-				}
-				if err := t.Execute(c.writer, data); err != nil {
-					log.Printf("template execute error: %v", err)
-				}
-			}
-		}
 	}
 
 	socket.OnDisconnected = func(err error, socket gowebsocket.Socket) {
 		log.Println("Disconnected from server ")
-		// socket.Close()
 		if c.msgCh != nil {
 			c.msgCh <- WebSocketDisconnectedMsg{Err: err}
 		}
@@ -213,20 +164,6 @@ func (c *StandardClient) Start() error {
 
 	socket.Close()
 	return nil
-
-	// for {
-	// 	<-interrupt
-	// 	log.Println("interrupt")
-
-	// 	disconnectBody := &PayloadBody{
-	// 		Id: tlChId,
-	// 	}
-	// 	disconnectText, _ := json.Marshal(&ConnectChannelPayload{Type: "disconnect", Body: *disconnectBody})
-	// 	socket.SendText(string(disconnectText))
-
-	// 	// socket.Close()
-	// 	return nil
-	// }
 }
 
 // Stop はWebSocket接続を終了します
