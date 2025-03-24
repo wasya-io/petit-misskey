@@ -10,6 +10,7 @@ import (
 	"github.com/wasya-io/petit-misskey/infrastructure/resolver"
 	"github.com/wasya-io/petit-misskey/infrastructure/setting"
 	"github.com/wasya-io/petit-misskey/infrastructure/websocket"
+	"github.com/wasya-io/petit-misskey/logger"
 	"github.com/wasya-io/petit-misskey/view"
 	"github.com/wasya-io/petit-misskey/view/stream"
 )
@@ -39,11 +40,12 @@ var streamCmd = &cobra.Command{
 		}
 
 		resolver := resolver.NewMisskeyStreamUrlResolver()
-		client, msgCh := websocket.NewClient(instance.BaseUrl, instance.AccessToken, resolver, nil) // websocketクライアントを作成
+		l := logger.New(true)                                                                          // ロガーを作成
+		client, msgCh := websocket.NewClient(instance.BaseUrl, instance.AccessToken, resolver, nil, l) // websocketクライアントを作成
 
-		model := stream.NewModel(instance, client, msgCh) // initializerでmodelを作る
+		model := stream.NewModel(instance, client, l, msgCh) // initializerでmodelを作る
 
-		view.Run(model) // modelをrunnerに渡す
+		view.Run(model, l) // modelをrunnerに渡す
 	},
 }
 

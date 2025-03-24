@@ -6,6 +6,7 @@ import (
 
 	"github.com/wasya-io/petit-misskey/infrastructure/resolver"
 	"github.com/wasya-io/petit-misskey/infrastructure/websocket"
+	"github.com/wasya-io/petit-misskey/logger"
 	"github.com/wasya-io/petit-misskey/model/misskey"
 	"github.com/wasya-io/petit-misskey/test"
 )
@@ -13,6 +14,7 @@ import (
 func TestGetStream(t *testing.T) {
 	cfg := test.NewConfig(t)
 	resolver := resolver.NewMisskeyStreamUrlResolver()
-	wsClient, _ := websocket.NewClient(cfg.Test.BaseUrl, misskey.AccessToken(cfg.Test.AccessToken), resolver, os.Stdout)
+	l := logger.New(true)
+	wsClient, _ := websocket.NewClient(cfg.Test.BaseUrl, misskey.AccessToken(cfg.Test.AccessToken), resolver, os.Stdout, l)
 	wsClient.Start()
 }

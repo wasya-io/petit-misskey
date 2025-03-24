@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/wasya-io/petit-misskey/domain/core"
 )
 
 type Model interface {
@@ -12,15 +13,15 @@ type Model interface {
 	MsgChannel() chan tea.Msg
 }
 
-func Run(model Model) {
-	p := tea.NewProgram(model)
+func Run(model Model, logger core.Logger) {
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	msgCh := model.MsgChannel()
 
 	go func() {
 		for {
-			fmt.Println("wait message.")
+			logger.Log("runner", "wait message.")
 			p.Send(<-msgCh)
-			fmt.Println("message received.")
+			logger.Log("runner", "message received.")
 		}
 	}()
 

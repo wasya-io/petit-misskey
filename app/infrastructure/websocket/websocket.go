@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/google/wire"
 	"github.com/sacOO7/gowebsocket"
+	"github.com/wasya-io/petit-misskey/domain/core"
 	"github.com/wasya-io/petit-misskey/domain/urlresolver"
 	"github.com/wasya-io/petit-misskey/infrastructure/resolver"
 	"github.com/wasya-io/petit-misskey/model/misskey"
@@ -23,6 +24,7 @@ type (
 		Stop()
 		SetWriter(w io.Writer)
 		SetTimeline(timelineType string) error
+		Pong()
 	}
 
 	StandardClient struct {
@@ -33,7 +35,8 @@ type (
 		msgCh       chan tea.Msg
 		ctx         context.Context
 		cancel      context.CancelFunc
-		socket      gowebsocket.Socket
+		socket      *gowebsocket.Socket
+		logger      core.Logger
 	}
 	ConnectChannelPayload struct {
 		Type string      `json:"type"`
@@ -57,6 +60,10 @@ type (
 	WebSocketDisconnectedMsg struct {
 		Err error `json:"error"`
 	}
+
+	WebSocketPingReceivedMsg struct {
+		Data string `json:"data"`
+	}
 )
 
 var (
@@ -70,7 +77,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(urlresolver.Resolver), new(*resolver.MisskeyStreamUrlResolver)), // FIXME: bindはここじゃなくて利用側(usecase層)に書く
 )
 
-func NewClient(baseUrl string, accessToken misskey.AccessToken, urlResolver urlresolver.Resolver, writeTo io.Writer) (Client, chan tea.Msg) {
+func NewClient(baseUrl string, accessToken misskey.AccessToken, urlResolver urlresolver.Resolver, writeTo io.Writer, logger core.Logger) (Client, chan tea.Msg) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	msgCh := make(chan tea.Msg, 100)
@@ -82,6 +89,7 @@ func NewClient(baseUrl string, accessToken misskey.AccessToken, urlResolver urlr
 		msgCh:       msgCh,
 		ctx:         ctx,
 		cancel:      cancel,
+		logger:      logger,
 	}, msgCh
 }
 
@@ -100,27 +108,28 @@ func (c *StandardClient) Start() error {
 	}
 
 	socket := gowebsocket.New(wsUrl)
-	c.socket = socket
+	c.socket = &socket
 
-	socket.OnConnected = func(socket gowebsocket.Socket) {
-		log.Println("Connected to server")
+	c.socket.OnConnected = func(socket gowebsocket.Socket) {
+		c.logger.Log("websocket", "Connected to WebSocket server")
 		if c.msgCh != nil {
 			c.msgCh <- WebSocketConnectedMsg{}
 		}
 	}
 
-	socket.OnConnectError = func(err error, socket gowebsocket.Socket) {
-		log.Println("Received connect error ", err)
+	c.socket.OnConnectError = func(err error, socket gowebsocket.Socket) {
+		c.logger.Log("websocket", fmt.Sprintf("WebSocket connection error: %v", err))
 		if c.msgCh != nil {
 			c.msgCh <- WebSocketErrorMsg{Err: err}
 		}
 	}
 
-	socket.OnTextMessage = func(message string, socket gowebsocket.Socket) {
+	c.socket.OnTextMessage = func(message string, socket gowebsocket.Socket) {
 		// TODO: このあたりの描画処理はまるごとwriterへ委譲する
+		c.logger.Log("websocket", fmt.Sprintf("Received message: %s", message))
 		note := &misskey.Note{}
 		if err := json.Unmarshal([]byte(message), &note); err != nil {
-			log.Printf("note marshalize error %v", err)
+			// log.Printf("note marshalize error %v", err)
 			return
 		}
 
@@ -129,14 +138,29 @@ func (c *StandardClient) Start() error {
 		}
 	}
 
-	socket.OnDisconnected = func(err error, socket gowebsocket.Socket) {
-		log.Println("Disconnected from server ")
+	c.socket.OnDisconnected = func(err error, socket gowebsocket.Socket) {
+		c.logger.Log("websocket", fmt.Sprintf("Disconnected from WebSocket server: %v", err))
 		if c.msgCh != nil {
 			c.msgCh <- WebSocketDisconnectedMsg{Err: err}
 		}
 	}
 
-	socket.Connect()
+	c.socket.OnPingReceived = func(data string, socket gowebsocket.Socket) {
+		c.logger.Log("websocket", fmt.Sprintf("Ping received: %s", data))
+		if c.msgCh != nil {
+			c.msgCh <- WebSocketPingReceivedMsg{Data: data}
+		}
+		c.Pong()
+	}
+
+	c.socket.OnPongReceived = func(data string, socket gowebsocket.Socket) {
+		c.logger.Log("websocket", fmt.Sprintf("Pong received: %s", data))
+		if c.msgCh != nil {
+			c.msgCh <- WebSocketPingReceivedMsg{Data: data}
+		}
+	}
+
+	c.socket.Connect()
 
 	uu, err := uuid.NewRandom()
 	if err != nil {
@@ -145,11 +169,11 @@ func (c *StandardClient) Start() error {
 	tlChId := uu.String()
 
 	connectLocalBody := &PayloadBody{
-		Channel: ChannelTypeLocal,
+		Channel: ChannelTypeHome,
 		Id:      tlChId,
 	}
 	homeText, _ := json.Marshal(&ConnectChannelPayload{Type: "connect", Body: *connectLocalBody})
-	socket.SendText(string(homeText))
+	c.socket.SendText(string(homeText))
 
 	<-c.ctx.Done()
 
@@ -160,15 +184,19 @@ func (c *StandardClient) Start() error {
 		Id: tlChId,
 	}
 	disconnectText, _ := json.Marshal(&ConnectChannelPayload{Type: "disconnect", Body: *disconnectBody})
-	socket.SendText(string(disconnectText))
-
-	socket.Close()
+	c.socket.SendText(string(disconnectText))
+	c.socket.Close()
+	c.logger.Flush()
 	return nil
 }
 
 // Stop はWebSocket接続を終了します
 func (c *StandardClient) Stop() {
 	c.cancel()
+}
+
+func (c *StandardClient) Pong() {
+	c.socket.SendText("pong")
 }
 
 // SetTimeline はタイムラインの種類を変更します

@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wasya-io/petit-misskey/infrastructure/setting"
 	"github.com/wasya-io/petit-misskey/infrastructure/websocket"
+	"github.com/wasya-io/petit-misskey/logger"
 	"github.com/wasya-io/petit-misskey/model/misskey"
 )
 
@@ -39,8 +40,10 @@ func TestStreamFunctionality(t *testing.T) {
 	// メッセージチャネル
 	msgCh := make(chan tea.Msg)
 
+	l := logger.New(true) // ロガーを作成
+
 	// Streamモデルの作成
-	model := NewModel(instance, mockClient, msgCh)
+	model := NewModel(instance, mockClient, l, msgCh)
 
 	// 終了シグナルの設定
 	ctx, cancel := context.WithCancel(context.Background())

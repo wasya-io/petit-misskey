@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -42,8 +41,8 @@ func NewConfig() *Config {
 }
 
 func readConfig(configType ConfigType) error {
-	cwd, _ := os.Getwd()
-	fmt.Printf("%s\n", cwd)
+	// cwd, _ := os.Getwd()
+	// fmt.Printf("%s\n", cwd)
 
 	name := fmt.Sprintf("config.%s", configType)
 	viper.SetConfigName(name)

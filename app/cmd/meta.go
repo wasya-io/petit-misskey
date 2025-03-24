@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wasya-io/petit-misskey/infrastructure/setting"
+	"github.com/wasya-io/petit-misskey/logger"
 	"github.com/wasya-io/petit-misskey/view"
 	"github.com/wasya-io/petit-misskey/view/meta"
 )
@@ -34,9 +35,10 @@ var metaCmd = &cobra.Command{
 		setting := setting.NewUserSetting()       // ユーザ設定を呼び出す
 		instance := setting.GetInstanceByKey(key) // ユーザ設定からインスタンスの接続情報を呼び出す
 
+		l := logger.New(true)
 		model := meta.InitializeModel(instance) // initializerでmodelを作る
 
-		view.Run(model) // modelをrunnerに渡す
+		view.Run(model, l) // modelをrunnerに渡す
 	},
 }
 

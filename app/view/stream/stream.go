@@ -9,26 +9,34 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fatih/color"
+	"github.com/wasya-io/petit-misskey/domain/core"
+	"github.com/wasya-io/petit-misskey/infrastructure/bubbles"
 	"github.com/wasya-io/petit-misskey/infrastructure/setting"
 	"github.com/wasya-io/petit-misskey/infrastructure/websocket"
 	"github.com/wasya-io/petit-misskey/model/misskey"
 )
 
 type Model struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	msgCh      chan tea.Msg
-	client     websocket.Client
-	notes      []*misskey.Note
-	quitting   bool
-	connected  bool
-	err        error
-	instance   *setting.Instance
-	viewBuffer strings.Builder
-	width      int
-	height     int
+	ctx         context.Context
+	logger      core.Logger
+	cancel      context.CancelFunc
+	msgCh       chan tea.Msg
+	viewMain    viewport.Model
+	viewFooter  viewport.Model
+	client      websocket.Client
+	notes       []*misskey.Note
+	quitting    bool
+	connected   bool
+	err         error
+	instance    *setting.Instance
+	viewBuffer  strings.Builder
+	width       int
+	height      int
+	initialized bool
 }
 
 var (
@@ -38,21 +46,25 @@ var (
 	RenoteTmpl string
 )
 
-func NewModel(instance *setting.Instance, client websocket.Client, msgCh chan tea.Msg) *Model {
+func NewModel(instance *setting.Instance, client websocket.Client, logger core.Logger, msgCh chan tea.Msg) *Model {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Model{
-		ctx:        ctx,
-		cancel:     cancel,
-		msgCh:      msgCh,
-		client:     client,
-		notes:      make([]*misskey.Note, 0, 100),
-		quitting:   false,
-		connected:  false,
-		instance:   instance,
-		viewBuffer: strings.Builder{},
-		width:      80,
-		height:     20,
+		ctx:         ctx,
+		logger:      logger,
+		cancel:      cancel,
+		msgCh:       msgCh,
+		viewMain:    bubbles.NewViewportFactory().StreamView(),
+		viewFooter:  bubbles.NewViewportFactory().FooterView(),
+		client:      client,
+		notes:       make([]*misskey.Note, 0, 100),
+		quitting:    false,
+		connected:   false,
+		instance:    instance,
+		viewBuffer:  strings.Builder{},
+		width:       120,
+		height:      20,
+		initialized: false,
 	}
 }
 
@@ -72,6 +84,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.logger.Log("stream", fmt.Sprintf("msg: %T", msg))
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -82,14 +95,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case websocket.NoteMessage:
-		m.notes = append(m.notes, msg.Note)
-		if len(m.notes) > 100 {
+		m.notes = append([]*misskey.Note{msg.Note}, m.notes...)
+		if len(m.notes) > 10 {
 			m.notes = m.notes[1:]
 		}
 		m.refreshViewBuffer()
 		return m, nil
 
 	case tea.WindowSizeMsg:
+
 		m.width = msg.Width
 		m.height = msg.Height
 		m.refreshViewBuffer()
@@ -100,16 +114,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, nil
 
+	case websocket.WebSocketPingReceivedMsg:
+		// m.viewFooter.SetContent("")
+		// m.viewMain.SetContent(msg.Data)
+		m.logger.Log("stream", fmt.Sprintf("ping received: %s", msg.Data))
+		return m, nil
+
 	case websocket.WebSocketDisconnectedMsg:
 		m.connected = false
 		if msg.Err != nil {
 			m.err = msg.Err
 		}
-		m.refreshViewBuffer()
+		m.viewFooter.SetContent("")
+		m.viewMain.SetContent("Disconnected")
 		return m, nil
 
 	case websocket.WebSocketErrorMsg:
 		m.err = msg.Err
+		m.viewFooter.SetContent("")
+		m.viewMain.SetContent(msg.Err.Error())
 		return m, nil
 
 	}
@@ -117,12 +140,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	if m.quitting {
-		return "Goodbye!"
-	}
+	m.viewMain.Width = m.width
+	m.viewFooter.Width = m.width
+
+	joinedView := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.viewMain.View(),
+		m.viewFooter.View(),
+	)
+	return joinedView
+
+	// if m.quitting {
+	// 	return "Goodbye!"
+	// }
+
+	// var b strings.Builder
+
+	// if m.connected {
+	// 	b.WriteString(fmt.Sprintf("接続中: %s (@%s)\n",
+	// 		color.GreenString(m.instance.BaseUrl),
+	// 		color.CyanString(m.instance.UserName)))
+	// } else {
+	// 	b.WriteString(fmt.Sprintf("切断: %s\n",
+	// 		color.RedString(m.instance.BaseUrl)))
+	// }
+
+	// if m.err != nil {
+	// 	b.WriteString(fmt.Sprintf("エラー: %s\n", color.RedString(m.err.Error())))
+	// }
+
+	// // ヘルプ表示
+	// b.WriteString("--------------------------------\n")
+	// b.WriteString("[h] ホームTL [l] ローカルTL [q] 終了\n")
+	// b.WriteString("--------------------------------\n\n")
+
+	// // キャッシュされたビューを表示
+	// b.WriteString(m.viewBuffer.String())
+
+	// return b.String()
+}
+
+func (m *Model) MsgChannel() chan tea.Msg {
+	return m.msgCh
+}
+
+func (m *Model) refreshViewBuffer() {
 
 	var b strings.Builder
-
 	if m.connected {
 		b.WriteString(fmt.Sprintf("接続中: %s (@%s)\n",
 			color.GreenString(m.instance.BaseUrl),
@@ -141,18 +205,11 @@ func (m Model) View() string {
 	b.WriteString("[h] ホームTL [l] ローカルTL [q] 終了\n")
 	b.WriteString("--------------------------------\n\n")
 
-	// キャッシュされたビューを表示
-	b.WriteString(m.viewBuffer.String())
+	m.viewFooter.SetContent(b.String())
 
-	return b.String()
-}
-
-func (m *Model) MsgChannel() chan tea.Msg {
-	return m.msgCh
-}
-
-func (m *Model) refreshViewBuffer() {
 	m.viewBuffer.Reset()
+
+	m.viewBuffer.WriteString("--------------------------------\n")
 
 	maxNotes := m.height - 6
 	if maxNotes < 0 {
@@ -169,6 +226,9 @@ func (m *Model) refreshViewBuffer() {
 		m.viewBuffer.WriteString(formatNote(note))
 		m.viewBuffer.WriteString("\n")
 	}
+
+	m.viewMain = bubbles.NewViewportFactory().StreamView()
+	m.viewMain.SetContent(m.viewBuffer.String())
 }
 
 // formatNote はノートを表示用にフォーマットします
