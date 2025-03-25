@@ -1,2 +1,6 @@
 http:
   timeout: 5s
+
+log:
+  maxEntries: 1000       # ログファイルの最大エントリ数（これを超えるとローテーション）
+  maxRotationFiles: 5    # 保持するローテーションファイルの最大数

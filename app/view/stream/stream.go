@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -37,6 +38,7 @@ type Model struct {
 	width       int
 	height      int
 	initialized bool
+	mu          sync.Mutex
 }
 
 var (
@@ -65,10 +67,11 @@ func NewModel(instance *setting.Instance, client websocket.Client, logger core.L
 		width:       120,
 		height:      20,
 		initialized: false,
+		mu:          sync.Mutex{},
 	}
 }
 
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	// WebSocketクライアントのgoroutine起動コマンドを返す
 	return func() tea.Msg {
 		// 別goroutineでWebSocket接続を開始
@@ -83,7 +86,7 @@ func (m Model) Init() tea.Cmd {
 	}
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.logger.Log("stream", fmt.Sprintf("msg: %T", msg))
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -91,13 +94,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			m.quitting = true
 			m.client.Stop()
+			m.logger.Log("stream", "終了処理を開始します")
+			// ロガーを正しく終了し、残りのログをフラッシュします
+			m.logger.Close()
 			return m, tea.Quit
 		}
 
 	case websocket.NoteMessage:
+		if msg.Note.Body.Body.RenoteID != "" {
+			m.logger.Log("stream", fmt.Sprintf("renote: %s", msg.Note.Body.Body.Renote.Text))
+		} else {
+			m.logger.Log("stream", fmt.Sprintf("note: %s", msg.Note.Body.Body.Text))
+		}
 		m.notes = append([]*misskey.Note{msg.Note}, m.notes...)
 		if len(m.notes) > 10 {
-			m.notes = m.notes[1:]
+			m.notes = m.notes[:10]
 		}
 		m.refreshViewBuffer()
 		return m, nil
@@ -139,7 +150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m *Model) View() string {
 	m.viewMain.Width = m.width
 	m.viewFooter.Width = m.width
 
@@ -185,7 +196,10 @@ func (m *Model) MsgChannel() chan tea.Msg {
 }
 
 func (m *Model) refreshViewBuffer() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
+	m.logger.Log("stream", "refresh started")
 	var b strings.Builder
 	if m.connected {
 		b.WriteString(fmt.Sprintf("接続中: %s (@%s)\n",
@@ -227,8 +241,11 @@ func (m *Model) refreshViewBuffer() {
 		m.viewBuffer.WriteString("\n")
 	}
 
-	m.viewMain = bubbles.NewViewportFactory().StreamView()
+	// m.viewMain = bubbles.NewViewportFactory().StreamView()
 	m.viewMain.SetContent(m.viewBuffer.String())
+	m.logger.Log("stream", fmt.Sprintf("view buffer: %s", m.viewBuffer.String()))
+
+	m.logger.Log("stream", "refresh finished")
 }
 
 // formatNote はノートを表示用にフォーマットします

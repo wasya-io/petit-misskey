@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 	"github.com/google/wire"
+	"github.com/gorilla/websocket"
 	"github.com/sacOO7/gowebsocket"
 	"github.com/wasya-io/petit-misskey/domain/core"
 	"github.com/wasya-io/petit-misskey/domain/urlresolver"
@@ -130,6 +131,7 @@ func (c *StandardClient) Start() error {
 		note := &misskey.Note{}
 		if err := json.Unmarshal([]byte(message), &note); err != nil {
 			// log.Printf("note marshalize error %v", err)
+			c.logger.Log("websocket", fmt.Sprintf("Failed to unmarshal message: %v", err))
 			return
 		}
 
@@ -196,7 +198,7 @@ func (c *StandardClient) Stop() {
 }
 
 func (c *StandardClient) Pong() {
-	c.socket.SendText("pong")
+	c.socket.SendBinary([]byte{websocket.PongMessage})
 }
 
 // SetTimeline はタイムラインの種類を変更します

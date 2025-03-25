@@ -27,6 +27,10 @@ type Config struct {
 		BaseUrl     string
 		AccessToken string
 	}
+	Log struct {
+		MaxEntries       int // ログファイルの最大エントリ数（これを超えるとローテーション）
+		MaxRotationFiles int // 保持するローテーションファイルの最大数
+	}
 }
 
 func NewConfig() *Config {
@@ -54,6 +58,14 @@ func readConfig(configType ConfigType) error {
 	}
 	if err := viper.Unmarshal(&instance); err != nil {
 		return errors.WithStack(err)
+	}
+
+	// ログ設定のデフォルト値を設定
+	if instance.Log.MaxEntries <= 0 {
+		instance.Log.MaxEntries = 1000 // デフォルトの最大エントリ数
+	}
+	if instance.Log.MaxRotationFiles <= 0 {
+		instance.Log.MaxRotationFiles = 5 // デフォルトのローテーションファイル数
 	}
 
 	return nil

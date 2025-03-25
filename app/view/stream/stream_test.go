@@ -223,8 +223,8 @@ func processModelUpdates(ctx context.Context, model *Model, msgCh chan tea.Msg) 
 			updatedModel, _ := model.Update(msg)
 
 			// 型アサーションで戻り値をStreamモデルに変換
-			if streamModel, ok := updatedModel.(Model); ok {
-				model = &streamModel
+			if streamModel, ok := updatedModel.(*Model); ok {
+				model = streamModel
 
 				// 更新後の表示を出力
 				fmt.Println("\n----------- 表示更新 -----------")
