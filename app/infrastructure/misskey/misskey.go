@@ -15,8 +15,9 @@ import (
 )
 
 type Client struct {
-	client http.Client
-	url    string
+	client      http.Client
+	url         string
+	accessToken misskey.AccessToken
 }
 
 func NewClient(
@@ -24,13 +25,14 @@ func NewClient(
 	instance *setting.Instance,
 ) *Client {
 	return &Client{
-		client: http.Client{Timeout: cfg.Http.Timeout},
-		url:    instance.BaseUrl,
+		client:      http.Client{Timeout: cfg.Http.Timeout},
+		url:         instance.BaseUrl,
+		accessToken: instance.AccessToken,
 	}
 }
 
 func (c *Client) Meta(ctx context.Context, contents misskey.Meta) (*misskey.MetaResponse, error) {
-
+	contents.AccessToken = c.accessToken
 	response, err := c.post(ctx, c.meta(), contents)
 	if err != nil {
 		return nil, err
@@ -44,8 +46,12 @@ func (c *Client) Meta(ctx context.Context, contents misskey.Meta) (*misskey.Meta
 	return ret, nil
 }
 
-func (c *Client) CreateNote(ctx context.Context, contents misskey.CreateNote) (*misskey.CreateNoteResponse, error) {
-
+func (c *Client) CreateNote(ctx context.Context, visibility misskey.Visibility, text string) (*misskey.CreateNoteResponse, error) {
+	contents := misskey.CreateNote{
+		AccessToken: c.accessToken,
+		Visibility:  visibility,
+		Text:        text,
+	}
 	response, err := c.post(ctx, c.createNotes(), contents)
 	if err != nil {
 		return nil, err

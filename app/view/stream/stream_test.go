@@ -11,10 +11,12 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/wasya-io/petit-misskey/infrastructure/misskey"
 	"github.com/wasya-io/petit-misskey/infrastructure/setting"
 	"github.com/wasya-io/petit-misskey/infrastructure/websocket"
 	"github.com/wasya-io/petit-misskey/logger"
-	"github.com/wasya-io/petit-misskey/model/misskey"
+	model "github.com/wasya-io/petit-misskey/model/misskey"
+	"github.com/wasya-io/petit-misskey/test"
 )
 
 // TestStreamFunctionality はStreamモデルの機能をテストします
@@ -42,8 +44,14 @@ func TestStreamFunctionality(t *testing.T) {
 
 	l := logger.New(true) // ロガーを作成
 
+	cfg := test.NewConfig(t)
+	apiClient := misskey.NewClient(
+		cfg,
+		instance,
+	)
+
 	// Streamモデルの作成
-	model := NewModel(instance, mockClient, l, msgCh)
+	model := NewModel(instance, mockClient, apiClient, l, msgCh)
 
 	// 終了シグナルの設定
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,16 +157,16 @@ func sendTestMessages(ctx context.Context, msgCh chan tea.Msg) {
 }
 
 // createTestNote はテスト用のノートを作成します
-func createTestNote(index int) *misskey.Note {
+func createTestNote(index int) *model.Note {
 	now := time.Now()
-	return &misskey.Note{
-		Body: misskey.NoteContainer{
+	return &model.Note{
+		Body: model.NoteContainer{
 			ID:   fmt.Sprintf("note-id-%d", index),
 			Type: "note",
-			Body: misskey.NoteBody{
+			Body: model.NoteBody{
 				ID:        fmt.Sprintf("note-id-%d", index),
 				CreatedAt: now,
-				User: misskey.NoteUser{
+				User: model.NoteUser{
 					ID:       fmt.Sprintf("user-id-%d", index),
 					Name:     fmt.Sprintf("ユーザー%d", index),
 					Username: fmt.Sprintf("user%d", index),
@@ -171,26 +179,26 @@ func createTestNote(index int) *misskey.Note {
 }
 
 // createTestRenote はテスト用のリノートを作成します
-func createTestRenote() *misskey.Note {
+func createTestRenote() *model.Note {
 	now := time.Now()
-	return &misskey.Note{
-		Body: misskey.NoteContainer{
+	return &model.Note{
+		Body: model.NoteContainer{
 			ID:   "renote-id",
 			Type: "note",
-			Body: misskey.NoteBody{
+			Body: model.NoteBody{
 				ID:        "renote-id",
 				CreatedAt: now,
-				User: misskey.NoteUser{
+				User: model.NoteUser{
 					ID:       "renote-user",
 					Name:     "リノートユーザー",
 					Username: "renote_user",
 				},
 				Text: "これはリノートです",
-				Renote: misskey.RenoteContent{
+				Renote: model.RenoteContent{
 					ID:        "original-note",
 					CreatedAt: now,
 					UserID:    "original-user",
-					User: misskey.NoteUser{
+					User: model.NoteUser{
 						ID:       "original-user",
 						Name:     "オリジナルユーザー",
 						Username: "original_user",

@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/wasya-io/petit-misskey/config"
+	"github.com/wasya-io/petit-misskey/infrastructure/misskey"
 	"github.com/wasya-io/petit-misskey/infrastructure/resolver"
 	"github.com/wasya-io/petit-misskey/infrastructure/setting"
 	"github.com/wasya-io/petit-misskey/infrastructure/websocket"
@@ -43,7 +45,13 @@ var streamCmd = &cobra.Command{
 		l := logger.New(true)                                                                          // ロガーを作成
 		client, msgCh := websocket.NewClient(instance.BaseUrl, instance.AccessToken, resolver, nil, l) // websocketクライアントを作成
 
-		model := stream.NewModel(instance, client, l, msgCh) // initializerでmodelを作る
+		cfg := config.NewConfig()
+		apiClient := misskey.NewClient(
+			cfg,
+			instance,
+		)
+
+		model := stream.NewModel(instance, client, apiClient, l, msgCh) // initializerでmodelを作る
 
 		view.Run(model, l) // modelをrunnerに渡す
 	},

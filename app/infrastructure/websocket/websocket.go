@@ -24,39 +24,49 @@ type (
 		Start() error
 		Stop()
 		SetWriter(w io.Writer)
-		SetTimeline(timelineType string) error
+		// SetTimeline(timelineType string) error
+		ToggleTimeline() error
 		Pong()
 	}
 
 	StandardClient struct {
-		baseUrl     string
-		accessToken string
-		urlResolver urlresolver.Resolver
-		writer      io.Writer
-		msgCh       chan tea.Msg
-		ctx         context.Context
-		cancel      context.CancelFunc
-		socket      *gowebsocket.Socket
-		logger      core.Logger
+		baseUrl          string
+		accessToken      string
+		urlResolver      urlresolver.Resolver
+		writer           io.Writer
+		msgCh            chan tea.Msg
+		ctx              context.Context
+		cancel           context.CancelFunc
+		socket           *gowebsocket.Socket
+		logger           core.Logger
+		currentTimeline  ChannelType
+		currentChannelId string
 	}
 	ConnectChannelPayload struct {
 		Type string      `json:"type"`
 		Body PayloadBody `json:"body"`
 	}
 	PayloadBody struct {
-		Channel string `json:"channel,omitempty"`
-		Id      string `json:"id"`
+		Channel ChannelType `json:"channel,omitempty"`
+		Id      string      `json:"id"`
 	}
 
 	NoteMessage struct {
 		Note *misskey.Note `json:"note"`
 	}
 
+	TimelineChangedMsg struct {
+		OldTimeline ChannelType `json:"old_timeline"`
+		NewTimeline ChannelType `json:"new_timeline"`
+	}
+
 	WebSocketErrorMsg struct {
 		Err error `json:"error"`
 	}
 
-	WebSocketConnectedMsg struct{}
+	WebSocketConnectedMsg struct {
+		Timeline ChannelType
+	}
 
 	WebSocketDisconnectedMsg struct {
 		Err error `json:"error"`
@@ -65,12 +75,14 @@ type (
 	WebSocketPingReceivedMsg struct {
 		Data string `json:"data"`
 	}
+
+	ChannelType string
 )
 
 var (
-	ChannelTypeMain  = "main"
-	ChannelTypeHome  = "homeTimeline"
-	ChannelTypeLocal = "localTimeline"
+	ChannelTypeMain  ChannelType = "main"
+	ChannelTypeHome  ChannelType = "homeTimeline"
+	ChannelTypeLocal ChannelType = "localTimeline"
 )
 
 var ProviderSet = wire.NewSet(
@@ -83,14 +95,16 @@ func NewClient(baseUrl string, accessToken misskey.AccessToken, urlResolver urlr
 
 	msgCh := make(chan tea.Msg, 100)
 	return &StandardClient{
-		baseUrl:     baseUrl,
-		accessToken: string(accessToken),
-		urlResolver: urlResolver,
-		writer:      nil,
-		msgCh:       msgCh,
-		ctx:         ctx,
-		cancel:      cancel,
-		logger:      logger,
+		baseUrl:          baseUrl,
+		accessToken:      string(accessToken),
+		urlResolver:      urlResolver,
+		writer:           nil,
+		msgCh:            msgCh,
+		ctx:              ctx,
+		cancel:           cancel,
+		logger:           logger,
+		currentTimeline:  ChannelTypeHome,
+		currentChannelId: "",
 	}, msgCh
 }
 
@@ -114,7 +128,7 @@ func (c *StandardClient) Start() error {
 	c.socket.OnConnected = func(socket gowebsocket.Socket) {
 		c.logger.Log("websocket", "Connected to WebSocket server")
 		if c.msgCh != nil {
-			c.msgCh <- WebSocketConnectedMsg{}
+			c.msgCh <- WebSocketConnectedMsg{c.currentTimeline}
 		}
 	}
 
@@ -164,18 +178,11 @@ func (c *StandardClient) Start() error {
 
 	c.socket.Connect()
 
-	uu, err := uuid.NewRandom()
-	if err != nil {
+	// タイムラインに接続
+	if err := c.connectToTimeline(c.currentTimeline); err != nil {
+		c.logger.Log("websocket", fmt.Sprintf("Failed to connect to timeline: %v", err))
 		return err
 	}
-	tlChId := uu.String()
-
-	connectLocalBody := &PayloadBody{
-		Channel: ChannelTypeHome,
-		Id:      tlChId,
-	}
-	homeText, _ := json.Marshal(&ConnectChannelPayload{Type: "connect", Body: *connectLocalBody})
-	c.socket.SendText(string(homeText))
 
 	<-c.ctx.Done()
 
@@ -183,7 +190,7 @@ func (c *StandardClient) Start() error {
 	log.Println("Closing WebSocket connection...")
 
 	disconnectBody := &PayloadBody{
-		Id: tlChId,
+		Id: c.currentChannelId,
 	}
 	disconnectText, _ := json.Marshal(&ConnectChannelPayload{Type: "disconnect", Body: *disconnectBody})
 	c.socket.SendText(string(disconnectText))
@@ -202,27 +209,77 @@ func (c *StandardClient) Pong() {
 }
 
 // SetTimeline はタイムラインの種類を変更します
-func (c *StandardClient) SetTimeline(timelineType string) error {
-	// if c.socket == nil {
-	// 	return errors.New("WebSocket接続が確立されていません")
-	// }
+func (c *StandardClient) setTimeline(timelineType ChannelType) error {
+	if c.socket == nil {
+		return fmt.Errorf("WebSocket接続が確立されていません")
+	}
 
-	// 既存のタイムラインから切断するコードが必要
-	// ...
+	// 同じタイムラインの場合は何もしない
+	if c.currentTimeline == timelineType {
+		return nil
+	}
 
-	// 新しいタイムラインに接続
+	// タイムライン変更を通知
+	if c.msgCh != nil {
+		c.msgCh <- TimelineChangedMsg{
+			OldTimeline: c.currentTimeline,
+			NewTimeline: timelineType,
+		}
+	}
+
+	return c.connectToTimeline(timelineType)
+}
+
+// ToggleTimeline は現在のタイムラインをローカルとホームで切り替えます
+func (c *StandardClient) ToggleTimeline() error {
+	if c.currentTimeline == ChannelTypeLocal {
+		return c.setTimeline(ChannelTypeHome)
+	} else {
+		return c.setTimeline(ChannelTypeLocal)
+	}
+}
+
+// タイムラインに接続する内部メソッド
+func (c *StandardClient) connectToTimeline(timelineType ChannelType) error {
 	uu, err := uuid.NewRandom()
 	if err != nil {
 		return fmt.Errorf("チャネルID生成エラー: %w", err)
 	}
-	chId := uu.String()
 
+	// 既存のタイムラインがあれば切断
+	if c.currentChannelId != "" {
+		disconnectBody := &PayloadBody{
+			Id: c.currentChannelId,
+		}
+		disconnectText, _ := json.Marshal(&ConnectChannelPayload{Type: "disconnect", Body: *disconnectBody})
+		c.socket.SendText(string(disconnectText))
+	}
+
+	// 新しいタイムラインに接続
+	newChannelID := uu.String()
 	connectBody := &PayloadBody{
 		Channel: timelineType,
-		Id:      chId,
+		Id:      newChannelID,
 	}
 	connectText, _ := json.Marshal(&ConnectChannelPayload{Type: "connect", Body: *connectBody})
 	c.socket.SendText(string(connectText))
 
+	// 現在のタイムライン情報を更新
+	c.currentTimeline = timelineType
+	c.currentChannelId = newChannelID
+
+	c.logger.Log("websocket", fmt.Sprintf("タイムラインを %s に切り替えました", timelineType))
+
 	return nil
+}
+
+func (t ChannelType) String() string {
+	switch t {
+	case ChannelTypeHome:
+		return "ホーム"
+	case ChannelTypeLocal:
+		return "ローカル"
+	default:
+		return string(t)
+	}
 }
