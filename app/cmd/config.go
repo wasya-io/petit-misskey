@@ -1,4 +1,7 @@
-package main
+/*
+Copyright © 2025 NAME HERE <EMAIL ADDRESS>
+*/
+package cmd
 
 import (
 	"bufio"
@@ -7,23 +10,32 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
-	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
+	"github.com/wasya-io/petit-misskey/infrastructure/setting"
+	"github.com/wasya-io/petit-misskey/model/misskey"
+	"github.com/wasya-io/petit-misskey/service/accounts"
 )
 
-// Instance はMisskeyインスタンスの設定情報を表します
-type Instance struct {
-	BaseUrl     string `toml:"baseurl"`
-	UserName    string `toml:"username"`
-	AccessToken string `toml:"token"`
+// configCmd represents the config command
+var configCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Petit-Misskeyの設定を管理します",
+	Long: `Petit-Misskeyの設定を対話的に管理します。
+インスタンスの追加、一覧表示、削除などが可能です。
+
+使用例:
+  petit-misskey config`,
+	Run: func(cmd *cobra.Command, args []string) {
+		runConfigManager()
+	},
 }
 
-// Config はTOML設定ファイルの構造を表します
-type Config struct {
-	Instances map[string]Instance `toml:"instance"`
+func init() {
+	rootCmd.AddCommand(configCmd)
 }
 
-func main() {
+// runConfigManager は設定管理の対話型インターフェースを実行します
+func runConfigManager() {
 	// 設定ファイルのパスを取得
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -32,22 +44,9 @@ func main() {
 	}
 	configPath := filepath.Join(configDir, "petit-misskey.toml")
 
-	// 既存の設定を読み込み
-	config, err := loadConfig(configPath)
-	if err != nil {
-		fmt.Printf("警告: 既存の設定ファイルの読み込みに失敗しました: %v\n", err)
-		// 新しい設定を初期化
-		config = &Config{
-			Instances: make(map[string]Instance),
-		}
-	}
-
-	// 既存の設定がない場合は初期化
-	if config == nil {
-		config = &Config{
-			Instances: make(map[string]Instance),
-		}
-	}
+	// ユーザー設定と関連サービスの初期化
+	userSetting := setting.NewUserSetting()
+	accountService := accounts.NewService(userSetting)
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -65,13 +64,13 @@ func main() {
 
 		switch choice {
 		case "1":
-			addInstance(scanner, config)
+			addInstance(scanner, userSetting, accountService)
 		case "2":
-			listInstances(config)
+			listInstances(userSetting)
 		case "3":
-			deleteInstance(scanner, config)
+			deleteInstance(scanner, userSetting)
 		case "4":
-			err := saveConfig(configPath, config)
+			err := saveConfig(configPath, userSetting)
 			if err != nil {
 				fmt.Printf("設定の保存に失敗しました: %v\n", err)
 				os.Exit(1)
@@ -87,52 +86,27 @@ func main() {
 	}
 }
 
-// loadConfig は設定ファイルを読み込みます
-func loadConfig(path string) (*Config, error) {
-	// ファイルが存在しない場合は新規作成と判断
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, nil
-	}
-
-	var config Config
-	if _, err := toml.DecodeFile(path, &config); err != nil {
-		return nil, errors.Wrap(err, "TOML設定ファイルのデコードに失敗")
-	}
-
-	// インスタンスマップの初期化
-	if config.Instances == nil {
-		config.Instances = make(map[string]Instance)
-	}
-
-	return &config, nil
-}
-
 // saveConfig は設定をファイルに保存します
-func saveConfig(path string, config *Config) error {
+func saveConfig(path string, userSetting *setting.UserSetting) error {
+	// 既存のインスタンス設定を取得
+	instances := userSetting.GetInstances()
+
 	// 設定ディレクトリが存在しない場合は作成
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return errors.Wrap(err, "設定ディレクトリの作成に失敗")
+		return fmt.Errorf("設定ディレクトリの作成に失敗: %w", err)
 	}
 
-	// ファイルを作成またはトランケート
-	file, err := os.Create(path)
-	if err != nil {
-		return errors.Wrap(err, "設定ファイルの作成に失敗")
-	}
-	defer file.Close()
-
-	// TOMLエンコーダを使用して設定を書き込み
-	encoder := toml.NewEncoder(file)
-	if err := encoder.Encode(config); err != nil {
-		return errors.Wrap(err, "設定のエンコードに失敗")
+	// インスタンスの変更をUserSettingに書き込む
+	if err := userSetting.WriteValue(instances); err != nil {
+		return fmt.Errorf("設定の保存に失敗: %w", err)
 	}
 
 	return nil
 }
 
 // addInstance はユーザーにインスタンス情報を入力してもらい、設定に追加します
-func addInstance(scanner *bufio.Scanner, config *Config) {
+func addInstance(scanner *bufio.Scanner, userSetting *setting.UserSetting, accountService *accounts.Service) {
 	fmt.Println("\n--- インスタンスの追加 ---")
 
 	// インスタンス名の入力
@@ -145,7 +119,7 @@ func addInstance(scanner *bufio.Scanner, config *Config) {
 			fmt.Println("インスタンス名は必須です。")
 			continue
 		}
-		if _, exists := config.Instances[instanceKey]; exists {
+		if userSetting.GetInstanceByKey(instanceKey) != nil {
 			fmt.Println("そのインスタンス名は既に登録されています。別の名前を入力してください。")
 			continue
 		}
@@ -196,41 +170,56 @@ func addInstance(scanner *bufio.Scanner, config *Config) {
 	}
 
 	// インスタンス情報を設定に追加
-	config.Instances[instanceKey] = Instance{
+	newInstance := setting.Instance{
 		BaseUrl:     baseURL,
 		UserName:    username,
-		AccessToken: token,
+		AccessToken: misskey.AccessToken(token),
+	}
+
+	// アカウントサービスを使って追加
+	err := accountService.Add(instanceKey, newInstance)
+	if err != nil {
+		if err == accounts.ErrAccountAlreadyExists {
+			fmt.Printf("エラー: インスタンス「%s」は既に登録されています。\n", instanceKey)
+		} else {
+			fmt.Printf("エラー: インスタンスの追加に失敗しました: %v\n", err)
+		}
+		return
 	}
 
 	fmt.Printf("インスタンス「%s」を追加しました。\n", instanceKey)
 }
 
 // listInstances は設定されているインスタンスの一覧を表示します
-func listInstances(config *Config) {
+func listInstances(userSetting *setting.UserSetting) {
 	fmt.Println("\n--- 登録済みインスタンス一覧 ---")
-	if len(config.Instances) == 0 {
+
+	instances := userSetting.GetInstances()
+	if len(instances) == 0 {
 		fmt.Println("登録されているインスタンスはありません。")
 		return
 	}
 
-	for name, instance := range config.Instances {
+	for name, instance := range instances {
 		fmt.Printf("- %s\n", name)
 		fmt.Printf("  URL: %s\n", instance.BaseUrl)
 		fmt.Printf("  ユーザー名: %s\n", instance.UserName)
-		fmt.Printf("  トークン: %s\n", maskToken(instance.AccessToken))
+		fmt.Printf("  トークン: %s\n", maskToken(string(instance.AccessToken)))
 	}
 }
 
 // deleteInstance はインスタンスを削除します
-func deleteInstance(scanner *bufio.Scanner, config *Config) {
+func deleteInstance(scanner *bufio.Scanner, userSetting *setting.UserSetting) {
 	fmt.Println("\n--- インスタンスの削除 ---")
-	if len(config.Instances) == 0 {
+
+	instances := userSetting.GetInstances()
+	if len(instances) == 0 {
 		fmt.Println("登録されているインスタンスはありません。")
 		return
 	}
 
 	fmt.Println("削除可能なインスタンス:")
-	for name := range config.Instances {
+	for name := range instances {
 		fmt.Printf("- %s\n", name)
 	}
 
@@ -238,7 +227,8 @@ func deleteInstance(scanner *bufio.Scanner, config *Config) {
 	scanner.Scan()
 	instanceKey := scanner.Text()
 
-	if _, exists := config.Instances[instanceKey]; !exists {
+	instance := userSetting.GetInstanceByKey(instanceKey)
+	if instance == nil {
 		fmt.Println("指定されたインスタンスは存在しません。")
 		return
 	}
@@ -248,7 +238,16 @@ func deleteInstance(scanner *bufio.Scanner, config *Config) {
 	confirm := scanner.Text()
 
 	if strings.ToLower(confirm) == "y" {
-		delete(config.Instances, instanceKey)
+		// インスタンスのマップを取得して更新
+		instances := userSetting.GetInstances()
+		delete(instances, instanceKey)
+
+		// 更新したマップを書き込み
+		if err := userSetting.WriteValue(instances); err != nil {
+			fmt.Printf("エラー: インスタンスの削除に失敗しました: %v\n", err)
+			return
+		}
+
 		fmt.Printf("インスタンス「%s」を削除しました。\n", instanceKey)
 	} else {
 		fmt.Println("削除をキャンセルしました。")
