@@ -1,6 +1,8 @@
 /*
 Copyright © 2025 NAME HERE <EMAIL ADDRESS>
 */
+// GPT-4o 2025/04/10 17:03 configのサブコマンドを追加
+// GPT-4o 2025/04/10 17:45 サブコマンドを対話式のみに簡素化
 package cmd
 
 import (
@@ -24,16 +26,106 @@ var configCmd = &cobra.Command{
 インスタンスの追加、一覧表示、削除などが可能です。
 
 使用例:
-  petit-misskey config`,
+  petit-misskey config          # 対話型モード
+  petit-misskey config add      # インスタンスの追加
+  petit-misskey config list     # インスタンス一覧の表示
+  petit-misskey config delete   # インスタンスの削除`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runConfigManager()
 	},
 }
 
-func init() {
-	rootCmd.AddCommand(configCmd)
+// configAddCmd はインスタンス追加のサブコマンド
+var configAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "インスタンスを追加します",
+	Long: `インスタンス情報を対話形式で入力し、Petit-Misskey設定に追加します。
+
+使用例:
+  petit-misskey config add`,
+	Run: func(cmd *cobra.Command, args []string) {
+		userSetting := setting.NewUserSetting()
+		accountService := accounts.NewService(userSetting)
+
+		// 対話モードで実行
+		scanner := bufio.NewScanner(os.Stdin)
+		addInstance(scanner, userSetting, accountService)
+
+		// 設定を保存
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			fmt.Printf("設定ディレクトリの取得に失敗しました: %v\n", err)
+			os.Exit(1)
+		}
+		configPath := filepath.Join(configDir, "petit-misskey.toml")
+
+		if err := saveConfig(configPath, userSetting); err != nil {
+			fmt.Printf("設定の保存に失敗しました: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("設定を保存しました: %s\n", configPath)
+	},
 }
 
+// configListCmd はインスタンス一覧表示のサブコマンド
+var configListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "登録済みインスタンスを一覧表示します",
+	Long: `Petit-Misskeyに登録されているインスタンスを一覧表示します。
+
+使用例:
+  petit-misskey config list`,
+	Run: func(cmd *cobra.Command, args []string) {
+		userSetting := setting.NewUserSetting()
+		listInstances(userSetting)
+	},
+}
+
+// configDeleteCmd はインスタンス削除のサブコマンド
+var configDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "インスタンスを削除します",
+	Long: `対話形式でインスタンスを選択して削除します。
+
+使用例:
+  petit-misskey config delete`,
+	Run: func(cmd *cobra.Command, args []string) {
+		userSetting := setting.NewUserSetting()
+
+		// 対話モードで実行
+		scanner := bufio.NewScanner(os.Stdin)
+		deleteInstance(scanner, userSetting)
+
+		// 設定を保存
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			fmt.Printf("設定ディレクトリの取得に失敗しました: %v\n", err)
+			os.Exit(1)
+		}
+		configPath := filepath.Join(configDir, "petit-misskey.toml")
+
+		if err := saveConfig(configPath, userSetting); err != nil {
+			fmt.Printf("設定の保存に失敗しました: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("設定を保存しました: %s\n", configPath)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(configCmd)
+
+	// サブコマンドの追加
+	configCmd.AddCommand(configAddCmd)
+	configCmd.AddCommand(configListCmd)
+	configCmd.AddCommand(configDeleteCmd)
+
+	// 対話式のみの実装にしたため、フラグ設定を削除
+}
+
+// 以下、既存の関数は変更なし
 // runConfigManager は設定管理の対話型インターフェースを実行します
 func runConfigManager() {
 	// 設定ファイルのパスを取得
